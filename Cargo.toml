@@ -1,0 +1,16 @@
+[package]
+name = "amk"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.65"
+colored = "2.0.0"
+fern = { version = "0.6.1", features = ["colored"] }
+log = "0.4.17"
+raw-window-handle = "0.5.0"
+vulkano = "0.31.0"
+vulkano-win = { version = "0.31.0", features = ["winit"] }
+winit = "0.27.3"
