@@ -6,6 +6,7 @@ pub(crate) enum ToRunnerMsg {
     RequestLoop(GameLoopKind),
     SendLoop(GameLoopKind, Box<dyn GameLoop>, f64),
     SetRelativeFrequency(GameLoopKind, f64),
+    SetThreadFrequency(f64),
     Stop,
 }
 

@@ -3,6 +3,8 @@ use std::{
     thread::{self, JoinHandle},
 };
 
+use crate::utils::sync::new_clock_sync;
+
 use super::{
     loops::{GameLoop, GameLoopContainer, GameLoopKind},
     msg::{FromRunnerMsg, ToRunnerMsg},
@@ -23,6 +25,8 @@ impl Runner {
                 let sender = f_sender;
                 let receiver = t_receiver;
                 let mut container = GameLoopContainer::new();
+                let mut clock_sync = new_clock_sync();
+                let mut frequency: f64 = 0.0;
                 loop {
                     if let Some(msg) = Self::receive_msg(&receiver, container.empty()) {
                         match msg {
@@ -36,8 +40,13 @@ impl Runner {
                             ToRunnerMsg::SetRelativeFrequency(kind, relative_frequency) => {
                                 container.set_relative_frequency(kind, relative_frequency)
                             }
+                            ToRunnerMsg::SetThreadFrequency(new_frequency) => {
+                                frequency = new_frequency;
+                            }
                         }
                     }
+                    container.run()?;
+                    clock_sync.sync(frequency);
                 }
                 anyhow::Ok(())
             }),
@@ -65,6 +74,12 @@ impl Runner {
         } else {
             panic!("invalid response")
         }
+    }
+
+    pub(crate) fn set_frequency(&self, frequency: f64) {
+        self.sender
+            .send(ToRunnerMsg::SetThreadFrequency(frequency))
+            .unwrap()
     }
 
     pub(crate) fn send_loop(

@@ -312,12 +312,12 @@ impl RenderContext {
     }
 
     fn create_framebuffers(
-        images: &Vec<Arc<SwapchainImage<SendSyncWindowHandle>>>,
+        images: &[Arc<SwapchainImage<SendSyncWindowHandle>>],
         render_pass: &Arc<RenderPass>,
     ) -> anyhow::Result<Vec<Arc<Framebuffer>>> {
-        Ok(images
+        images
             .iter()
-            .map(|img| ImageView::new_default(img.clone()).map_err(|e| anyhow::Error::from(e)))
+            .map(|img| ImageView::new_default(img.clone()).map_err(anyhow::Error::from))
             .map(|iv| {
                 iv.and_then(|iv| {
                     Framebuffer::new(
@@ -327,10 +327,11 @@ impl RenderContext {
                             ..Default::default()
                         },
                     )
-                    .map_err(|e| anyhow::Error::from(e))
+                    .map_err(anyhow::Error::from)
                 })
             })
-            .collect::<Result<Vec<Arc<Framebuffer>>, _>>()?)
+            .collect::<Result<Vec<Arc<Framebuffer>>, _>>()
+            .map_err(anyhow::Error::from)
     }
 
     pub fn wait_for_done(&mut self) {
@@ -396,7 +397,7 @@ impl RenderContext {
             Err(e) => {
                 self.prev_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
                 Err(e)?
-            },
+            }
         }
         Ok(recreate_swapchain)
     }

@@ -4,7 +4,12 @@
 
 use std::sync::Arc;
 
-use exec::{loop_impl::RenderLoop, msg::{ELRLMsg, ELGLMMsg}};
+use exec::{
+    loop_impl::RenderLoop,
+    manager::MAIN_THREAD_ID,
+    mode::Mode,
+    msg::{ELGLMMsg, ELRLMsg},
+};
 use graphics::context::RenderContext;
 use logging::init_log;
 use scenes::root::RootScene;
@@ -35,7 +40,7 @@ fn main() -> anyhow::Result<()> {
     let (elrl_sender, elrl_receiver) = std::sync::mpsc::channel::<ELRLMsg>();
     // EventLoop-GameLoopManager (ELGLM) communication channels
     let (elglm_sender, elglm_receiver) = std::sync::mpsc::channel::<ELGLMMsg>();
-        
+
     let render_loop = RenderLoop {
         root_scene: root_scene.clone(),
         render_ctx: RenderContext::new(&window)?,
@@ -53,6 +58,19 @@ fn main() -> anyhow::Result<()> {
     };
     let audio_loop = AudioLoop { root_scene };
 
-    let manager = GameLoopManager::new(event_loop, update_loop, render_loop, audio_loop);
+    let manager = GameLoopManager::new_moded(
+        event_loop,
+        update_loop,
+        render_loop,
+        audio_loop,
+        Mode::new()
+            .frequency(MAIN_THREAD_ID, 0.0)
+            .frequency(0, 1.0)
+            .frequency(1, 30.0)
+            .frequency(2, 1.0)
+            .update(0, 1.0)
+            .render(1, 1.0)
+            .audio(2, 1.0),
+    );
     manager.run(window_event_loop, elglm_receiver);
 }

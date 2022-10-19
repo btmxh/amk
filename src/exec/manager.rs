@@ -1,6 +1,11 @@
-use std::sync::mpsc::{TryRecvError, Receiver};
+use std::{
+    sync::mpsc::{Receiver, TryRecvError},
+    time::{Duration, Instant},
+};
 
 use winit::event_loop::ControlFlow;
+
+use crate::utils::sync::{new_clock_sync, ClockSync};
 
 use super::{
     loop_impl::{AudioLoop, EventLoop, RenderLoop, UpdateLoop},
@@ -12,7 +17,7 @@ use super::{
 
 pub type WinitEventLoop = winit::event_loop::EventLoop<()>;
 
-const MAX_RUNNERS: usize = NUM_GAME_LOOPS;
+pub const MAX_RUNNERS: usize = NUM_GAME_LOOPS;
 pub const MAIN_THREAD_ID: usize = MAX_RUNNERS;
 
 pub struct GameLoopManager {
@@ -21,6 +26,7 @@ pub struct GameLoopManager {
     loops: GameLoopContainer,
     exec_mode: Mode,
     event_loop: EventLoop,
+    clock_sync: Box<dyn ClockSync>,
 }
 
 pub trait DropData {
@@ -40,10 +46,23 @@ impl GameLoopManager {
         loops.insert(GameLoopKind::Audio, Box::new(audio_loop), 1.0);
         Self {
             runners: Default::default(),
+            clock_sync: new_clock_sync(),
             exec_mode: Mode::new(),
             loops,
             event_loop,
         }
+    }
+
+    pub fn new_moded(
+        event_loop: EventLoop,
+        update_loop: UpdateLoop,
+        render_loop: RenderLoop,
+        audio_loop: AudioLoop,
+        exec_mode: Mode,
+    ) -> Self {
+        let mut manager = Self::new(event_loop, update_loop, render_loop, audio_loop);
+        manager.set_mode(exec_mode);
+        manager
     }
 
     fn request_loop(&mut self, kind: GameLoopKind) -> Box<dyn GameLoop> {
@@ -79,6 +98,14 @@ impl GameLoopManager {
         }
     }
 
+    fn set_thread_frequency(&mut self, thread_id: usize, frequency: f64) {
+        self.get_or_create_runner(thread_id);
+        self.runners[thread_id]
+            .as_ref()
+            .unwrap()
+            .set_frequency(frequency);
+    }
+
     fn set_relative_frequency(
         &mut self,
         kind: GameLoopKind,
@@ -111,23 +138,40 @@ impl GameLoopManager {
                 self.set_relative_frequency(kind, new_thread_id, new_relative_frequency);
             }
         }
+
+        for i in 0..MAX_RUNNERS {
+            self.set_thread_frequency(i, new_mode.thread_frequencies[i]);
+        }
+
+        self.exec_mode = new_mode;
     }
 
     pub fn run(mut self, window_loop: WinitEventLoop, elglm_receiver: Receiver<ELGLMMsg>) -> ! {
         window_loop.run(move |evt, _, cf| {
-            self.event_loop.run(evt);
-            loop {
-                match elglm_receiver.try_recv() {
-                    Err(TryRecvError::Empty) => break,
-                    r => match r.unwrap() {
-                        ELGLMMsg::SetMode(mode) => self.set_mode(mode),
-                        ELGLMMsg::Stop => {
-                            *cf = ControlFlow::Exit;
+            *cf = if self.loops.empty() {
+                ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(100))
+            } else {
+                ControlFlow::Poll
+            };
+            match evt {
+                winit::event::Event::MainEventsCleared => {
+                    loop {
+                        match elglm_receiver.try_recv() {
+                            Err(TryRecvError::Empty) => break,
+                            r => match r.unwrap() {
+                                ELGLMMsg::SetMode(mode) => self.set_mode(mode),
+                                ELGLMMsg::Stop => {
+                                    *cf = ControlFlow::Exit;
+                                }
+                            },
                         }
-                    },
+                    }
+                    self.loops.run().expect("Error running game loops");
+                    self.clock_sync
+                        .sync(self.exec_mode.thread_frequencies[MAIN_THREAD_ID]);
                 }
+                e => self.event_loop.run(e),
             }
-            self.loops.run().expect("Error running game loops");
         });
     }
 }
