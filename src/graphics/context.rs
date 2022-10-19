@@ -356,6 +356,7 @@ impl RenderContext {
 
         self.swapchain = new_swapchain;
         self.framebuffers = Self::create_framebuffers(&new_images, &self.render_pass)?;
+        self.render_extent.set(size);
         Ok(true)
     }
 
