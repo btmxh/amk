@@ -25,16 +25,19 @@ use vulkano::{
         },
         Instance, InstanceCreateInfo,
     },
+    pipeline::graphics::viewport::Viewport,
     render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass},
     swapchain::{
         acquire_next_image, AcquireError, ColorSpace, Surface, Swapchain, SwapchainAbstract,
         SwapchainCreateInfo, SwapchainCreationError, SwapchainPresentInfo,
     },
     sync::{FlushError, GpuFuture, Sharing},
-    VulkanLibrary,
+    VulkanLibrary, buffer::TypedBufferAccess,
 };
 use vulkano_win::{create_surface_from_handle, required_extensions};
 use winit::{dpi::PhysicalSize, window::Window};
+
+use super::renderers::triangle::TriangleRenderer;
 
 #[derive(Debug)]
 pub struct SendSyncWindowHandle {
@@ -80,6 +83,8 @@ pub struct RenderContext {
     pub render_pass: Arc<RenderPass>,
     pub framebuffers: Vec<Arc<Framebuffer>>,
     pub prev_frame_end: Option<Box<dyn GpuFuture>>,
+
+    pub triangle_renderer: TriangleRenderer,
 }
 
 unsafe impl Send for RenderContext {}
@@ -292,6 +297,7 @@ impl RenderContext {
         let prev_frame_end = Some(vulkano::sync::now(device.clone()).boxed());
 
         Ok(Self {
+            triangle_renderer: TriangleRenderer::new(device.clone(), render_pass.clone())?,
             lib,
             instance,
             debug_messenger,
@@ -375,6 +381,20 @@ impl RenderContext {
                 },
                 SubpassContents::Inline,
             )?
+            .set_viewport(
+                0,
+                [Viewport {
+                    origin: [0.0, 0.0],
+                    dimensions: [
+                        self.render_extent.get().width as f32,
+                        self.render_extent.get().height as f32,
+                    ],
+                    depth_range: -1.0..1.0,
+                }],
+            )
+            .bind_pipeline_graphics(self.triangle_renderer.pipeline.clone())
+            .bind_vertex_buffers(0, self.triangle_renderer.vertex_buffer.clone())
+            .draw(self.triangle_renderer.vertex_buffer.len() as u32, 1, 0, 0)?
             .end_render_pass()?;
         let command_buffer = builder.build()?;
         let future = self

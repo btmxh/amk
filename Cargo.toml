@@ -11,6 +11,8 @@ colored = "2.0.0"
 fern = { version = "0.6.1", features = ["colored"] }
 log = "0.4.17"
 raw-window-handle = "0.5.0"
-vulkano = { git = "https://github.com/vulkano-rs/vulkano" }
-vulkano-win = { git = "https://github.com/vulkano-rs/vulkano", features = ["winit"] }
+vulkano = { git = "https://github.com/vulkano-rs/vulkano", rev = "725c12c5421f21665ac5036f8e4f1309bf332536" }
+vulkano-win = { git = "https://github.com/vulkano-rs/vulkano", rev = "725c12c5421f21665ac5036f8e4f1309bf332536", features = ["winit"] }
+vulkano-shaders = { git = "https://github.com/vulkano-rs/vulkano", rev = "725c12c5421f21665ac5036f8e4f1309bf332536" }
 winit = "0.27.3"
+bytemuck = "1.12.1"
