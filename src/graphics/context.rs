@@ -1,15 +1,23 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{cell::Cell, collections::HashSet, sync::Arc};
 
 use raw_window_handle::{
     HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
 };
 use vulkano::{
+    command_buffer::{
+        allocator::{
+            CommandBufferAllocator, StandardCommandBufferAllocator,
+            StandardCommandBufferBuilderAlloc,
+        },
+        AutoCommandBufferBuilder, CommandBufferLevel, CommandBufferUsage, RenderPassBeginInfo,
+        SubpassContents,
+    },
     device::{physical::PhysicalDevice, Device},
     device::{
         physical::PhysicalDeviceType, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo,
     },
     format::Format,
-    image::{ImageUsage, SwapchainImage},
+    image::{view::ImageView, ImageUsage, SwapchainImage},
     instance::{
         debug::{
             DebugUtilsMessageSeverity, DebugUtilsMessageType, DebugUtilsMessenger,
@@ -17,13 +25,18 @@ use vulkano::{
         },
         Instance, InstanceCreateInfo,
     },
-    swapchain::{ColorSpace, Surface, Swapchain, SwapchainCreateInfo},
-    sync::Sharing,
+    render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass},
+    swapchain::{
+        acquire_next_image, AcquireError, ColorSpace, Surface, Swapchain, SwapchainAbstract,
+        SwapchainCreateInfo, SwapchainCreationError, SwapchainPresentInfo,
+    },
+    sync::{FlushError, GpuFuture, Sharing},
     VulkanLibrary,
 };
 use vulkano_win::{create_surface_from_handle, required_extensions};
-use winit::window::Window;
+use winit::{dpi::PhysicalSize, window::Window};
 
+#[derive(Debug)]
 pub struct SendSyncWindowHandle {
     pub window: RawWindowHandle,
     pub display: RawDisplayHandle,
@@ -61,7 +74,15 @@ pub struct RenderContext {
     pub present_queue: Arc<Queue>,
     pub swapchain: Arc<Swapchain<SendSyncWindowHandle>>,
     pub images: Vec<Arc<SwapchainImage<SendSyncWindowHandle>>>,
+    pub command_buffer_allocator: Arc<StandardCommandBufferAllocator>,
+    pub main_command_buffer: StandardCommandBufferBuilderAlloc,
+    pub render_extent: Cell<PhysicalSize<u32>>,
+    pub render_pass: Arc<RenderPass>,
+    pub framebuffers: Vec<Arc<Framebuffer>>,
+    pub prev_frame_end: Option<Box<dyn GpuFuture>>,
 }
+
+unsafe impl Send for RenderContext {}
 
 impl RenderContext {
     pub fn new(window: &Window) -> anyhow::Result<Self> {
@@ -239,6 +260,37 @@ impl RenderContext {
             )?
         };
 
+        let command_buffer_allocator =
+            Arc::new(StandardCommandBufferAllocator::new(device.clone()));
+        let main_command_buffer = command_buffer_allocator
+            .allocate(
+                graphics_queue_index.try_into().unwrap(),
+                CommandBufferLevel::Primary,
+                1,
+            )?
+            .next()
+            .unwrap();
+
+        let render_pass = vulkano::single_pass_renderpass!(
+            device.clone(),
+            attachments: {
+                color: {
+                    load: Clear,
+                    store: Store,
+                    format: swapchain.image_format(),
+                    samples: 1,
+                }
+            },
+            pass: {
+                color: [color],
+                depth_stencil: {}
+            }
+        )?;
+
+        let framebuffers = Self::create_framebuffers(&images, &render_pass)?;
+
+        let prev_frame_end = Some(vulkano::sync::now(device.clone()).boxed());
+
         Ok(Self {
             lib,
             instance,
@@ -250,6 +302,102 @@ impl RenderContext {
             present_queue,
             swapchain,
             images,
+            command_buffer_allocator,
+            main_command_buffer,
+            render_extent: Cell::new(window.inner_size()),
+            render_pass,
+            framebuffers,
+            prev_frame_end,
         })
+    }
+
+    fn create_framebuffers(
+        images: &Vec<Arc<SwapchainImage<SendSyncWindowHandle>>>,
+        render_pass: &Arc<RenderPass>,
+    ) -> anyhow::Result<Vec<Arc<Framebuffer>>> {
+        Ok(images
+            .iter()
+            .map(|img| ImageView::new_default(img.clone()).map_err(|e| anyhow::Error::from(e)))
+            .map(|iv| {
+                iv.and_then(|iv| {
+                    Framebuffer::new(
+                        render_pass.clone(),
+                        FramebufferCreateInfo {
+                            attachments: vec![iv],
+                            ..Default::default()
+                        },
+                    )
+                    .map_err(|e| anyhow::Error::from(e))
+                })
+            })
+            .collect::<Result<Vec<Arc<Framebuffer>>, _>>()?)
+    }
+
+    pub fn wait_for_done(&mut self) {
+        self.prev_frame_end.as_mut().unwrap().cleanup_finished();
+    }
+
+    pub fn resize(&mut self, size: PhysicalSize<u32>) -> anyhow::Result<bool> {
+        let (new_swapchain, new_images) = match self.swapchain.recreate(SwapchainCreateInfo {
+            image_extent: size.into(),
+            ..self.swapchain.create_info()
+        }) {
+            Ok(r) => r,
+            Err(SwapchainCreationError::ImageExtentNotSupported { .. }) => return Ok(false),
+            Err(e) => Err(e)?,
+        };
+
+        self.swapchain = new_swapchain;
+        self.framebuffers = Self::create_framebuffers(&new_images, &self.render_pass)?;
+        Ok(true)
+    }
+
+    pub fn render(&mut self) -> anyhow::Result<bool> {
+        let (image_idx, mut recreate_swapchain, acquire_future) =
+            match acquire_next_image(self.swapchain.clone(), None) {
+                Ok(r) => r,
+                Err(AcquireError::OutOfDate) => return Ok(false),
+                Err(e) => Err(e)?,
+            };
+        let mut builder = AutoCommandBufferBuilder::primary(
+            self.command_buffer_allocator.as_ref(),
+            self.graphics_queue.queue_family_index(),
+            CommandBufferUsage::OneTimeSubmit,
+        )?;
+        builder
+            .begin_render_pass(
+                RenderPassBeginInfo {
+                    clear_values: vec![Some([0.0, 0.0, 0.2, 1.0].into())],
+                    ..RenderPassBeginInfo::framebuffer(
+                        self.framebuffers[image_idx as usize].clone(),
+                    )
+                },
+                SubpassContents::Inline,
+            )?
+            .end_render_pass()?;
+        let command_buffer = builder.build()?;
+        let future = self
+            .prev_frame_end
+            .take()
+            .unwrap()
+            .join(acquire_future)
+            .then_execute(self.graphics_queue.clone(), command_buffer)?
+            .then_swapchain_present(
+                self.present_queue.clone(),
+                SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_idx),
+            )
+            .then_signal_fence_and_flush();
+        match future {
+            Ok(f) => self.prev_frame_end = Some(f.boxed()),
+            Err(FlushError::OutOfDate) => {
+                recreate_swapchain = true;
+                self.prev_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed())
+            }
+            Err(e) => {
+                self.prev_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
+                Err(e)?
+            },
+        }
+        Ok(recreate_swapchain)
     }
 }

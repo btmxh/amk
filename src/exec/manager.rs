@@ -1,4 +1,4 @@
-use std::sync::mpsc::{self, TryRecvError};
+use std::sync::mpsc::{TryRecvError, Receiver};
 
 use winit::event_loop::ControlFlow;
 
@@ -113,13 +113,11 @@ impl GameLoopManager {
         }
     }
 
-    pub fn run(mut self, window_loop: WinitEventLoop) -> ! {
-        // EventLoop-GameLoopManager (ELGLM) communication channels
-        let (el_glm_sender, el_glm_receiver) = mpsc::channel::<ELGLMMsg>();
+    pub fn run(mut self, window_loop: WinitEventLoop, elglm_receiver: Receiver<ELGLMMsg>) -> ! {
         window_loop.run(move |evt, _, cf| {
-            self.event_loop.run(evt, &el_glm_sender);
+            self.event_loop.run(evt);
             loop {
-                match el_glm_receiver.try_recv() {
+                match elglm_receiver.try_recv() {
                     Err(TryRecvError::Empty) => break,
                     r => match r.unwrap() {
                         ELGLMMsg::SetMode(mode) => self.set_mode(mode),
@@ -129,6 +127,7 @@ impl GameLoopManager {
                     },
                 }
             }
+            self.loops.run().expect("Error running game loops");
         });
     }
 }

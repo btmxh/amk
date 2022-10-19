@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use exec::loop_impl::RenderLoop;
+use exec::{loop_impl::RenderLoop, msg::{ELRLMsg, ELGLMMsg}};
 use graphics::context::RenderContext;
 use logging::init_log;
 use scenes::root::RootScene;
@@ -31,13 +31,22 @@ fn main() -> anyhow::Result<()> {
 
     let root_scene = Arc::new(RootScene::new());
 
+    // ELRL communication channels
+    let (elrl_sender, elrl_receiver) = std::sync::mpsc::channel::<ELRLMsg>();
+    // EventLoop-GameLoopManager (ELGLM) communication channels
+    let (elglm_sender, elglm_receiver) = std::sync::mpsc::channel::<ELGLMMsg>();
+        
     let render_loop = RenderLoop {
         root_scene: root_scene.clone(),
         render_ctx: RenderContext::new(&window)?,
+        new_size: None,
+        elrl_receiver,
     };
     let event_loop = EventLoop {
         window,
         root_scene: root_scene.clone(),
+        elrl_sender,
+        elglm_sender,
     };
     let update_loop = UpdateLoop {
         root_scene: root_scene.clone(),
@@ -45,5 +54,5 @@ fn main() -> anyhow::Result<()> {
     let audio_loop = AudioLoop { root_scene };
 
     let manager = GameLoopManager::new(event_loop, update_loop, render_loop, audio_loop);
-    manager.run(window_event_loop);
+    manager.run(window_event_loop, elglm_receiver);
 }

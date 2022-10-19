@@ -1,3 +1,5 @@
+use winit::dpi::PhysicalSize;
+
 use super::{loops::{GameLoop, GameLoopKind}, mode::Mode};
 
 pub(crate) enum ToRunnerMsg {
@@ -14,4 +16,8 @@ pub(crate) enum FromRunnerMsg {
 pub enum ELGLMMsg {
     SetMode(Mode),
     Stop,
+}
+
+pub enum ELRLMsg {
+    Resize(PhysicalSize<u32>)
 }

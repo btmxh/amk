@@ -14,7 +14,7 @@ impl GameLoopKind {
 pub(crate) const NUM_GAME_LOOPS: usize = 3;
 
 pub trait GameLoop: Send {
-    fn run(&self) {}
+    fn run(&mut self) -> anyhow::Result<()> { Ok(()) }
 }
 
 pub(crate) struct GameLoopContainer {
@@ -56,16 +56,17 @@ impl GameLoopContainer {
         self.data.iter().all(|gl| gl.is_none())
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> anyhow::Result<()> {
         for index in 0..NUM_GAME_LOOPS {
-            if let Some(gl) = &self.data[index] {
+            if let Some(gl) = &mut self.data[index] {
                 let mut timer_value = self.timer[index] + self.relative_frequencies[index];
                 while timer_value >= 0.0 {
                     timer_value -= 1.0;
-                    gl.run();
+                    gl.run()?;
                 }
                 self.timer[index] = timer_value;
             }
         }
+        Ok(())
     }
 }
