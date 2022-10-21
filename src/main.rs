@@ -66,7 +66,7 @@ fn main() -> anyhow::Result<()> {
         Mode::new()
             .frequency(MAIN_THREAD_ID, 0.0)
             .frequency(0, 1.0)
-            .frequency(1, 30.0)
+            .frequency(1, 0.0)
             .frequency(2, 1.0)
             .update(0, 1.0)
             .render(1, 1.0)
